@@ -1,0 +1,229 @@
+---
+Title       : Airfoil Self Noise Prediction using Machine Learning Algorithms
+Subtitle    : NACA 0012 Airfoil Noise Prediction
+Author      : Srisai Sivakumar
+Job         : Aerodynamics Engineer turned Machine Learning Enthusiast
+Date: "Friday, May 22, 2015"
+output: html_document
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website: http://groupware.les.inf.puc-rio.br/har. (See the section on the Weight Lifting Exercise Dataset)
+
+## Data 
+
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+## Objective
+
+The goal of the project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.
+
+## Download the training and test data
+
+```{r echo = T, results = 'asis'}
+
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "pml-training.csv"
+testFile  <- "pml-testing.csv"
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile=trainFile)
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile=testFile)
+}
+
+```
+## Reading and Cleaning Data, Processing and Slicing 
+
+Any operation performed on the training set ought to be replicated on the test data too.
+
+```{r echo = T, results = 'asis'}
+library(caret)
+library(corrplot)
+library(manipulate)
+library(xtable)
+data <- read.csv("pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("pml-testing.csv",na.strings=c("NA","#DIV/0!",""))
+dim(data)
+
+# remove columns woth more than 30% NAs
+data1 <- data[, colSums(is.na(data)) < nrow(data) * 0.3]
+test1 <- testing[, colSums(is.na(testing)) < nrow(testing) * 0.3]
+
+# remove all Near Zero Variance variables
+NZV <- nearZeroVar(data1, saveMetrics= TRUE)
+data2 <- data1[,!NZV$nzv]
+test2 <- test1[,!NZV$nzv]
+
+# remove unnecessary columns like user_name and time windows
+data3 <- data2[,-c(1:6)]
+test3 <- test2[,-c(1:6)]
+
+# set seed for reproducability and partition data into training and validation sets
+# assign 60% of data for training and 40% for validation set
+set.seed(1)
+inTrain <- createDataPartition(y=data3$classe, p=0.60, list=FALSE)
+training <- data3[inTrain,]
+valid <- data3[-inTrain,]
+
+```
+Since Random Forest is to be used to model the data, the correlation among the features are not going to be examined, but will be plotted to see if any patterns emerge
+
+```{r echo = T, results = 'asis'}
+# Examine correlation among features
+corrPlot <- cor(training[, -53])
+corrplot(corrPlot, method="color")
+
+```
+
+## Data Modelling and evaluating in sample error
+
+Because of its accuracy and ability to handle large number of features, especially when the interactions between variables are unknown, flexibility to use unscaled variables and categorical variables, which reduces the need for cleaning and transforming variables, immunity from overfitting and noise, and  insensitivity to correlation among the features, Random Forest is chosen to model the training data. A 4-fold Cross Validation shall be employed.
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+
+rf1<- train(x=training[,-53],y=training$classe,method="rf",
+                trControl=trainControl(method = "cv", number = 4),
+                data=training,do.trace=F,ntree=250)
+
+rf1
+
+# User and Elapsed time
+rf1$times
+
+# Testing the model on the same data used to create it: to evaluate in sample error 
+pred_train_rf1 <- predict(rf1$finalModel,newdata=training)
+a <- confusionMatrix(pred_train_rf1,training$classe)
+print(xtable(as.matrix(a)),type="HTML")
+
+# In Sample Error
+ISE_rf1<- 100- (mean((pred_train_rf1 == training$classe)*1)*100)
+ISE_rf1
+
+# Out of Sample Error Estimate
+pred_valid_rf1 <- predict(rf1,valid)
+table(pred_valid_rf1,valid$classe)
+OSE_rf1<-100 - (mean((pred_valid_rf1 == valid$classe)*1)*100)
+OSE_rf1
+
+# Confusion Matrix
+b <- confusionMatrix(valid$classe,pred_valid_rf1)
+print(xtable(as.matrix(b)),type="HTML")
+
+
+```
+
+## Applying the RF Data Model to test data
+
+The 'rf1' model developed using the training set shall be used to predict the 'classe' variable for the test set.
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+pred_test_rf1 <- predict(rf1,test3[,-53])
+pred_test_rf1
+table(pred_test_rf1)
+
+```
+
+## Relative Importance of Features and parsimonius model development
+
+Random Forest can be used to determine the relative importance if each of the features. By eliminating the least influential ones, the model could become more parsinimonious.
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+
+# Overall relative importance
+
+importance <- varImp(rf1, scale=FALSE)
+# Importance of each feature for each of the classe outcomes
+plot(importance)
+dotPlot(importance, top = 15)
+
+# Identifying the top 15 vriables
+
+variables <- varImp(rf1)
+vars <- variables[[1]]
+top.vars <- rownames(vars)[order(rowSums(vars), decreasing = TRUE)][1:15]
+
+# Examining the correlations again
+corrPlot1 <- cor(training[, top.vars])
+corrplot(corrPlot1, method="color")
+
+```
+
+## Parsimonious Model
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+
+top_rf <- train(x = training[ , top.vars], y = training$classe, method="rf",
+                trControl=trainControl(method = "cv", number = 4),
+                data=training,do.trace=F,ntree=250)
+
+# Checr user and elapsed times
+top_rf$times
+
+```
+
+## Predictions from Parsimonious Model
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+
+pred_train_top <- predict(top_rf,newdata=training)
+c <- confusionMatrix(pred_train_top,training$classe)
+print(xtable(as.matrix(c)),type="HTML")
+# In sample error with the top 15 variables
+ISE_top<- 100- (mean((pred_train_top == training$classe)*1)*100)
+ISE_top
+
+pred_valid_top <- predict(top_rf,valid)
+d <- confusionMatrix(pred_valid_top,valid$classe)
+print(xtable(as.matrix(d)),type="HTML")
+# Out of sample error with the top 15 variables
+OSE_top<-100 - (mean((pred_valid_top == valid$classe)*1)*100)
+OSE_top
+
+```
+
+## Results for the test data set
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+
+pred_test_top <- predict(top_rf,test3[,-53])
+pred_test_top
+table(pred_test_top)
+
+```
+
+## Comparing the Test set predictions using the full and parsimonious models
+
+```{r echo = T, results = 'asis',warning=FALSE,message=FALSE}
+
+identical(pred_test_top,pred_test_rf1)
+
+plot(c(52,15),c(OSE_rf1,OSE_top),type="l",
+     col=2,lwd=2,xlab="# featured included in the model",
+     ylab = "Out of Sample Error Estimates", 
+     main= 'Out of Sample Error Estimates Vs # Features in RF model',
+     xlim = c(20,50))
+
+
+```
+
+## Conclusion
+
+Full model out of sample error estimate
+```{r}
+OSE_rf1
+```
+
+Parsimonious model out of sample error estimate
+```{r}
+OSE_top
+```
+
+Both models gives acceptable levels of Out of Sample Error estimates. The choice of number of features to be considered could be dictated by the accuracy levels needed and/or the computing time constraints. An effective trade off can be achieved by tuning the model.

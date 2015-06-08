@@ -1,0 +1,5 @@
+setwd("C:/Users/S.Srisai/Documents/working_directory/R/PML/project/Practical-Machine-Learning")
+data <- read.csv("pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+names(data)
+str(data)
+dim(data)
